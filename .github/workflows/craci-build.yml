@@ -1,0 +1,230 @@
+# CRACI build-only pipeline.
+#
+# Self-contained replacement for the upstream OpenClaw workflows, trimmed down
+# to the parts that actually *build* something and rewritten for CRACI runners.
+#
+# CRACI runner notes (source: ../../craci/app/execution/labels/labels.go and
+# app/execution/scheduler/k8s/manifests/deployment.yaml):
+#   - A job dispatches to CRACI only if `runs-on` contains the `craci` marker.
+#   - Config labels: cpu (<=32), ram GiB (<=128), disk GiB (<=1024), image.
+#   - image=ubuntu-24.04 -> gha-ubuntu-24.04: ships Node 24, Docker CE + buildx,
+#     git, curl and the GitHub Actions runner. amd64-only (AMD SEV-SNP).
+#   - No macOS and no native arm64 runners exist, so the macOS app build and the
+#     arm64 Docker build run via emulation (or are dropped). Nothing publishes.
+name: craci-build
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: craci-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Bundled plugins compiled into the Docker image (matches docker-release.yml).
+  OPENCLAW_EXTENSIONS: diagnostics-otel
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Core JS build: tsdown bundle (dist/, dist-runtime/), Control UI, and the
+  # publishable npm tarball — produced via `npm pack`, never `npm publish`.
+  # ---------------------------------------------------------------------------
+  js-build:
+    name: JS bundle + Control UI + npm pack
+    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=40]
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node + pnpm
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Build (tsdown -> dist/, dist-runtime/)
+        run: pnpm build
+
+      - name: Build Control UI (-> dist/control-ui/)
+        run: pnpm ui:build
+
+      - name: Pack npm tarball (no publish)
+        run: npm pack
+
+      - name: Report build output
+        run: |
+          echo "::group::dist tree (top level)"
+          ls -la dist
+          echo "::endgroup::"
+          echo "::group::build-info.json"
+          cat dist/build-info.json || true
+          echo "::endgroup::"
+          du -sh dist dist-runtime || true
+          ls -la openclaw-*.tgz
+
+      - name: Upload npm tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-npm-tarball
+          path: openclaw-*.tgz
+          retention-days: 7
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-dist
+          path: |
+            dist/
+            !dist/**/*.map
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Docker image, native amd64. Build-only (--load), never pushed to a registry.
+  # Runs `pnpm build:docker` inside the multi-stage Dockerfile.
+  # ---------------------------------------------------------------------------
+  docker-amd64:
+    name: Docker image (linux/amd64, build-only)
+    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=60]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            OPENCLAW_EXTENSIONS=${{ env.OPENCLAW_EXTENSIONS }}
+          push: false
+          load: true
+          tags: openclaw:craci-amd64
+          provenance: false
+
+      - name: Inspect image
+        run: |
+          docker images openclaw:craci-amd64
+          echo "::group::image history"
+          docker history --no-trunc openclaw:craci-amd64 || true
+          echo "::endgroup::"
+
+  # ---------------------------------------------------------------------------
+  # Docker image, linux/arm64 via QEMU emulation on the amd64 runner. No arm
+  # runner required, but emulated builds are slow — kept separate so it never
+  # blocks the amd64 path. Build-only, never pushed.
+  # ---------------------------------------------------------------------------
+  docker-arm64-emulated:
+    name: Docker image (linux/arm64, emulated, build-only)
+    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=60]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (arm64, emulated)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          build-args: |
+            OPENCLAW_EXTENSIONS=${{ env.OPENCLAW_EXTENSIONS }}
+          push: false
+          load: true
+          tags: openclaw:craci-arm64
+          provenance: false
+
+      - name: Inspect image
+        run: docker images openclaw:craci-arm64
+
+  # ---------------------------------------------------------------------------
+  # Android APK (assemblePlayDebug). Runs on the amd64 runner — no Android-
+  # specific runner needed. The base image lacks a JDK/Android SDK, so we
+  # provision Temurin 17 + the cmdline-tools here (mirrors ci.yml's android job).
+  # ---------------------------------------------------------------------------
+  android-apk:
+    name: Android APK (assemblePlayDebug)
+    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=40]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+          cache-dependency-path: |
+            apps/android/**/*.gradle*
+            apps/android/**/gradle-wrapper.properties
+            apps/android/gradle/libs.versions.toml
+
+      - name: Cache Android SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/.android-sdk
+          key: ${{ runner.os }}-android-sdk-v1-cmdline-12266719-platform-36-build-tools-36.0.0
+          restore-keys: |
+            ${{ runner.os }}-android-sdk-v1-
+
+      - name: Setup Android SDK cmdline-tools
+        run: |
+          set -euo pipefail
+          ANDROID_SDK_ROOT="$HOME/.android-sdk"
+          CMDLINE_TOOLS_VERSION="12266719"
+          ARCHIVE="commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+          URL="https://dl.google.com/android/repository/${ARCHIVE}"
+
+          if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+            curl -fsSL "$URL" -o "/tmp/${ARCHIVE}"
+            rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+            unzip -q "/tmp/${ARCHIVE}" -d "$ANDROID_SDK_ROOT/cmdline-tools"
+            mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          fi
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses >/dev/null
+          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+      - name: Assemble Play debug APK
+        working-directory: apps/android
+        run: ./gradlew --no-daemon --build-cache :app:assemblePlayDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-android-apk
+          path: apps/android/app/build/outputs/apk/**/*.apk
+          retention-days: 7
