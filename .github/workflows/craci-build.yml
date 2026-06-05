@@ -35,7 +35,7 @@ jobs:
   # ---------------------------------------------------------------------------
   js-build:
     name: JS bundle + Control UI + npm pack
-    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=40]
+    runs-on: [craci, cpu=8, ram=16, disk=40]
     timeout-minutes: 30
     env:
       NODE_OPTIONS: --max-old-space-size=8192
@@ -90,7 +90,7 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-amd64:
     name: Docker image (linux/amd64, build-only)
-    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=60]
+    runs-on: [craci, cpu=8, ram=16, disk=60]
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -126,7 +126,7 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-arm64-emulated:
     name: Docker image (linux/arm64, emulated, build-only)
-    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=60]
+    runs-on: [craci, cpu=8, ram=16, disk=60]
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -163,7 +163,7 @@ jobs:
   # ---------------------------------------------------------------------------
   android-apk:
     name: Android APK (assemblePlayDebug)
-    runs-on: [craci, image=ubuntu-24.04, cpu=8, ram=16, disk=40]
+    runs-on: [craci, cpu=8, ram=16, disk=40]
     timeout-minutes: 45
     steps:
       - name: Checkout
