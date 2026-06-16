@@ -3,10 +3,9 @@
 # Self-contained replacement for the upstream OpenClaw workflows, trimmed down
 # to the parts that actually *build* something and rewritten for CRACI runners.
 #
-# CRACI runner notes (source: ../../craci/app/execution/labels/labels.go and
-# app/execution/scheduler/k8s/manifests/deployment.yaml):
+# CRACI runner notes:
 #   - A job dispatches to CRACI only if `runs-on` contains the `craci` marker.
-#   - Config labels: cpu (<=32), ram GiB (<=128), disk GiB (<=1024), image.
+#   - Resource options belong in the first `cracicorp/setup@v1` pseudo-step.
 #   - image=ubuntu-24.04 -> gha-ubuntu-24.04: ships Node 24, Docker CE + buildx,
 #     git, curl and the GitHub Actions runner. amd64-only (AMD SEV-SNP).
 #   - No macOS and no native arm64 runners exist, so the macOS app build and the
@@ -35,11 +34,14 @@ jobs:
   # ---------------------------------------------------------------------------
   js-build:
     name: JS bundle + Control UI + npm pack
-    runs-on: [craci, cpu=8, ram=16, disk=40]
+    runs-on: [craci]
     timeout-minutes: 30
     env:
       NODE_OPTIONS: --max-old-space-size=8192
     steps:
+      - uses: cracicorp/setup@v1
+        with:
+          size: "4"
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -90,9 +92,12 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-amd64:
     name: Docker image (linux/amd64, build-only)
-    runs-on: [craci, cpu=8, ram=16, disk=60]
+    runs-on: [craci]
     timeout-minutes: 45
     steps:
+      - uses: cracicorp/setup@v1
+        with:
+          size: "4"
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -126,9 +131,12 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-arm64-emulated:
     name: Docker image (linux/arm64, emulated, build-only)
-    runs-on: [craci, cpu=8, ram=16, disk=60]
+    runs-on: [craci]
     timeout-minutes: 90
     steps:
+      - uses: cracicorp/setup@v1
+        with:
+          size: "4"
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -163,9 +171,12 @@ jobs:
   # ---------------------------------------------------------------------------
   android-apk:
     name: Android APK (assemblePlayDebug)
-    runs-on: [craci, cpu=8, ram=16, disk=40]
+    runs-on: [craci]
     timeout-minutes: 45
     steps:
+      - uses: cracicorp/setup@v1
+        with:
+          size: "4"
       - name: Checkout
         uses: actions/checkout@v4
 
