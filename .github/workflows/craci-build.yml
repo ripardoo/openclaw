@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: cracicorp/setup@v1
         with:
-          size: "4"
+          size: "8"
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -97,7 +97,7 @@ jobs:
     steps:
       - uses: cracicorp/setup@v1
         with:
-          size: "4"
+          size: "8"
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -136,7 +136,7 @@ jobs:
     steps:
       - uses: cracicorp/setup@v1
         with:
-          size: "4"
+          size: "8"
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -176,7 +176,7 @@ jobs:
     steps:
       - uses: cracicorp/setup@v1
         with:
-          size: "4"
+          size: "8"
       - name: Checkout
         uses: actions/checkout@v4
 
